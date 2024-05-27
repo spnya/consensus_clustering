@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Consensus Clustering Experiment</title>
+    <link rel="stylesheet" href="/static/styles.css">
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+</head>
+<body>
+    <header>
+        <h1>Consensus Clustering Experiment</h1>
+    </header>
+    <main>
+        <section>
+            <h2>Run Consensus Clustering Experiment</h2>
+            <form id="experiment-form">
+                <label for="N">Number of objects (N):</label>
+                <input type="number" id="N" name="N" value="1000"><br><br>
+                <label for="K">Number of clusters (K):</label>
+                <input type="number" id="K" name="K" value="4"><br><br>
+                <label for="M">Ensemble size (M):</label>
+                <input type="number" id="M" name="M" value="10"><br><br>
+                <label for="p">Mutation probability (p):</label>
+                <input type="number" step="0.1" id="p" name="p" value="0.8"><br><br>
+                <label for="shift_type">Shift Type:</label>
+                <select id="shift_type" name="shift_type">
+                    <option value="modularity">Modularity</option>
+                    <option value="scale">Scale</option>
+                </select><br><br>
+                <label for="num_experiments">Number of Experiments:</label>
+                <input type="number" id="num_experiments" name="num_experiments" value="1"><br><br>
+                <label for="use_power_law">Use Power Law Distribution:</label>
+                <input type="checkbox" id="use_power_law" name="use_power_law"><br><br>
+                <label for="alpha">Power Law Alpha (if enabled):</label>
+                <input type="number" step="0.1" id="alpha" name="alpha" value="1.5" disabled><br><br>
+                <button type="button" onclick="runExperiments()">Run Experiments</button>
+            </form>
+            <div id="loading" class="loader-container">
+                <img class="loader" src="/static/calculating.gif">
+            </div>
+            <div id="status"></div>
+            <div id="results"></div>
+        </section>
+    </main>
+
+    <script>
+        // Enable or disable the alpha input based on the use_power_law checkbox
+        document.getElementById('use_power_law').addEventListener('change', function() {
+            document.getElementById('alpha').disabled = !this.checked;
+        });
+
+        function runExperiments() {
+            $('#loading').show();
+            $('#status').show();
+            $('#results').show().html('');
+
+            const data = {
+                N: parseInt(document.getElementById('N').value),
+                K: parseInt(document.getElementById('K').value),
+                M: parseInt(document.getElementById('M').value),
+                p: parseFloat(document.getElementById('p').value),
+                shift_type: document.getElementById('shift_type').value,
+                num_experiments: parseInt(document.getElementById('num_experiments').value),
+                use_power_law: document.getElementById('use_power_law').checked,
+                alpha: parseFloat(document.getElementById('alpha').value)
+            };
+
+            $.ajax({
+                url: '/run_experiments',
+                type: 'POST',
+                contentType: 'application/json',
+                data: JSON.stringify(data),
+                success: function(response) {
+                    $('#loading').show();
+                    fetchStatus();
+                }
+            });
+        }
+
+        function fetchStatus() {
+            $.ajax({
+                url: '/status',
+                type: 'GET',
+                success: function(response) {
+                    const completed = response.completed;
+                    const total = response.total;
+                    $('#status').html(`<p>Completed: ${completed} / ${total}</p>`);
+                    if (completed < total) {
+                        displayResults(response.results);
+                        setTimeout(fetchStatus, 50);
+                    } else {
+                        $('#loading').hide();
+                        displayResults(response.results);
+                    }
+                }
+            });
+        }
+
+        function displayResults(results) {
+            const statsTable = `
+                <h2>Aggregate Stats</h2>
+                <table>
+                    <tr>
+                        <th>Method</th>
+                        <th>Average Clusters</th>
+                        <th>Average ARI</th>
+                        <th>Standard Deviation of ARI</th>
+                    </tr>
+                    <tr>
+                        <td>Agglomerative Clustering</td>
+                        <td>${average(results.map(r => r.agglomerative.clusters))}</td>
+                        <td>${average(results.map(r => r.agglomerative.ari))}</td>
+                        <td>${standardDeviation(results.map(r => r.agglomerative.ari))}</td>
+                    </tr>
+                    <tr>
+                        <td>Louvain Clustering</td>
+                        <td>${average(results.map(r => r.louvain.clusters))}</td>
+                        <td>${average(results.map(r => r.louvain.ari))}</td>
+                        <td>${standardDeviation(results.map(r => r.louvain.ari))}</td>
+                    </tr>
+                    <tr>
+                        <td>BIRCH Clustering</td>
+                        <td>${average(results.map(r => r.birch.clusters))}</td>
+                        <td>${average(results.map(r => r.birch.ari))}</td>
+                        <td>${standardDeviation(results.map(r => r.birch.ari))}</td>
+                    </tr>
+                    <tr>
+                        <td>OPTICS Clustering</td>
+                        <td>${average(results.map(r => r.optics.clusters))}</td>
+                        <td>${average(results.map(r => r.optics.ari))}</td>
+                        <td>${standardDeviation(results.map(r => r.optics.ari))}</td>
+                    </tr>
+                    <tr>
+                        <td>Spectral Clustering</td>
+                        <td>${average(results.map(r => r.spectral.clusters))}</td>
+                        <td>${average(results.map(r => r.spectral.ari))}</td>
+                        <td>${standardDeviation(results.map(r => r.spectral.ari))}</td>
+                    </tr>
+                    <tr>
+                        <td>MeanShift Clustering</td>
+                        <td>${average(results.map(r => r.meanshift.clusters))}</td>
+                        <td>${average(results.map(r => r.meanshift.ari))}</td>
+                        <td>${standardDeviation(results.map(r => r.meanshift.ari))}</td>
+                    </tr>
+                    <tr>
+                        <td>KMeans Clustering</td>
+                        <td>${average(results.map(r => r.kmeans.clusters))}</td>
+                        <td>${average(results.map(r => r.kmeans.ari))}</td>
+                        <td>${standardDeviation(results.map(r => r.kmeans.ari))}</td>
+                    </tr>
+                </table>
+            `;
+            $('#results').html(statsTable);
+        }
+
+        function average(arr) {
+            return (arr.reduce((a, b) => a + b, 0) / arr.length).toFixed(2);
+        }
+
+        function standardDeviation(arr) {
+            const mean = arr.reduce((a, b) => a + b, 0) / arr.length;
+            const squareDiffs = arr.map(value => Math.pow(value - mean, 2));
+            const avgSquareDiff = squareDiffs.reduce((a, b) => a + b, 0) / squareDiffs.length;
+            return Math.sqrt(avgSquareDiff).toFixed(2);
+        }
+    </script>
+</body>
+</html>

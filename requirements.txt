@@ -1,0 +1,9 @@
+Flask
+matplotlib
+scipy
+scikit-learn
+python-louvain
+networkx
+flask-sqlalchemy
+flask-admin
+psycopg2-binary
