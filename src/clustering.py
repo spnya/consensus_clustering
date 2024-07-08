@@ -20,24 +20,23 @@ def generate_ground_truth(N, K, use_power_law=False, alpha=1.5):
     Returns:
     - ground_truth: An array of length N with cluster labels.
     """
-    if use_power_law:
-        # Generate power law distributed sizes
-        sizes = np.random.zipf(alpha, K)
+    min_value = 1  # Minimum size of each cluster
+    max_value = N  # Maximum size of each cluster
 
-        # Normalize sizes to sum to N
-        sizes = sizes / sizes.sum() * N
-        sizes = np.round(sizes).astype(int)
+    flag = True
+    while flag:
+        # Generate K-1 random sizes
+        sizes = np.random.randint(min_value, max_value, K - 1)
 
-        # Adjust sizes to ensure they sum to N
-        while sizes.sum() < N:
-            sizes[np.argmax(sizes)] += 1
-        while sizes.sum() > N:
-            sizes[np.argmax(sizes)] -= 1
-    else:
-        # Generate uniform sizes
-        sizes = [N // K] * K
-        for i in range(N % K):
-            sizes[i] += 1
+        # Calculate the sum of generated sizes
+        sum_sizes = np.sum(sizes)
+
+        # Check if the sum of sizes is less than N
+        if sum_sizes < (N - min_value):
+            # Calculate the last size to make the total sum N
+            last_size = N - sum_sizes
+            sizes = np.append(sizes, last_size)
+            flag = False
 
     # Assign cluster labels based on sizes
     ground_truth = np.zeros(N, dtype=int)
@@ -45,7 +44,6 @@ def generate_ground_truth(N, K, use_power_law=False, alpha=1.5):
     for k in range(K):
         ground_truth[current:current + sizes[k]] = k
         current += sizes[k]
-
     np.random.shuffle(ground_truth)
     return ground_truth
 

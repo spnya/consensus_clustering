@@ -1,4 +1,6 @@
 import logging
+import os
+
 from flask import Flask, request, render_template, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from flask_admin import Admin, BaseView, expose
@@ -13,7 +15,7 @@ import threading
 app = Flask(__name__)
 
 # Configure the database
-app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://gen_user:%3C.S%3D1%5Eb%3EP!Q~C%26@82.97.244.247:5432/cluster'
+app.config['SQLALCHEMY_DATABASE_URI'] = f'postgresql://{os.environ.get("DB_USER")}:{os.environ.get("DB_PASSWORD")}@82.97.244.247:5432/cluster'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = True
 db = SQLAlchemy(app)
 

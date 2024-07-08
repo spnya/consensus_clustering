@@ -36,12 +36,18 @@ https://consensus.spnya.ru
    python3 -m pip install -r requirements.txt
    ```
 
-2. Start the Flask application:
+2. Export environmental variables for Database :
+   ```sh
+   export DB_USER=name
+   export DB_PASSWORD=pass
+   ```
+
+3. Start the Flask application:
    ```sh
    python app.py
    ```
 
-3. Open your web browser and navigate to:
+4. Open your web browser and navigate to:
    ```
    http://localhost:8000/
    ```
