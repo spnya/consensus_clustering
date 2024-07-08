@@ -13,6 +13,8 @@ from sklearn.metrics import adjusted_rand_score
 import threading
 
 app = Flask(__name__)
+lock = threading.Lock()
+semaphore = threading.Semaphore(5)
 
 # Configure the database
 app.config['SQLALCHEMY_DATABASE_URI'] = f'postgresql://{os.environ.get("DB_USER")}:{os.environ.get("DB_PASSWORD")}@82.97.244.247:5432/cluster'
@@ -79,15 +81,27 @@ def run_experiments():
     experiment_results = []
     current_experiment_index = 0
 
-    def run_all_experiments():
+    def run_experiment_thread(exp):
         with app.app_context():
-            global experiments, experiment_results, current_experiment_index
-            for exp in experiments:
+            with semaphore:
                 result = run_single_experiment(exp)
                 with lock:
                     experiment_results.append(result)
                     save_result_to_db(exp, result)
+                    global current_experiment_index
                     current_experiment_index += 1
+
+    def run_all_experiments():
+        with app.app_context():
+            global experiments
+            threads = []
+            for exp in experiments:
+                thread = threading.Thread(target=run_experiment_thread, args=(exp,))
+                threads.append(thread)
+                thread.start()
+
+            for thread in threads:
+                thread.join()
 
     threading.Thread(target=run_all_experiments).start()
     return jsonify({'status': 'Experiments started'})
