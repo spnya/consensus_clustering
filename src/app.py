@@ -1,27 +1,31 @@
 import logging
 import os
-
+import matlab.engine  # Import MATLAB Engine
 from flask import Flask, request, render_template, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from flask_admin import Admin, BaseView, expose
 from flask_admin.contrib.sqla import ModelView
-from clustering import generate_ground_truth, mutate_partition, compute_consensus_matrix, modularity_shift, scale_shift
+from clustering import generate_ground_truth, mutate_partition, modularity_shift, scale_shift
 from clustering import agglomerative_clustering, louvain_clustering, birch_clustering, optics_clustering
 from clustering import spectral_clustering, meanshift_clustering, kmeans_clustering
 import numpy as np
 from sklearn.metrics import adjusted_rand_score
 import threading
+import time  # Import for timing the MATLAB function
 
 app = Flask(__name__)
 lock = threading.Lock()
 semaphore = threading.Semaphore(5)
 
 # Configure the database
-app.config['SQLALCHEMY_DATABASE_URI'] = f'postgresql://{os.environ.get("DB_USER")}:{os.environ.get("DB_PASSWORD")}@82.97.244.247:5432/cluster'
+app.config[
+    'SQLALCHEMY_DATABASE_URI'] = f'postgresql://{os.environ.get("DB_USER")}:{os.environ.get("DB_PASSWORD")}@82.97.244.247:5432/cluster'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = True
 db = SQLAlchemy(app)
 
 app.app_context().push()
+
+eng = matlab.engine.start_matlab()
 
 # Define the Experiment model
 class Experiment(db.Model):
@@ -47,7 +51,6 @@ class Experiment(db.Model):
     kmeans_ari = db.Column(db.Float, nullable=False)
     timestamp = db.Column(db.DateTime, server_default=db.func.now())
 
-# Initialize Flask-Admin
 admin = Admin(app, name='Experiment Admin', template_mode='bootstrap3')
 admin.add_view(ModelView(Experiment, db.session))
 
@@ -56,13 +59,16 @@ experiment_results = []
 current_experiment_index = 0
 lock = threading.Lock()
 
+
 @app.route('/')
 def index():
     return render_template('index.html')
 
+
 @app.route('/experiment')
 def experiment():
     return render_template('experiment.html')
+
 
 @app.route('/run_experiments', methods=['POST'])
 def run_experiments():
@@ -77,7 +83,9 @@ def run_experiments():
     use_power_law = data.get('use_power_law', False)
     alpha = data.get('alpha', 1.5)
 
-    experiments = [{'N': N, 'K': K, 'M': M, 'p': p, 'shift_type': shift_type, 'use_power_law': use_power_law, 'alpha': alpha} for _ in range(num_experiments)]
+    experiments = [
+        {'N': N, 'K': K, 'M': M, 'p': p, 'shift_type': shift_type, 'use_power_law': use_power_law, 'alpha': alpha} for _
+        in range(num_experiments)]
     experiment_results = []
     current_experiment_index = 0
 
@@ -106,6 +114,7 @@ def run_experiments():
     threading.Thread(target=run_all_experiments).start()
     return jsonify({'status': 'Experiments started'})
 
+
 @app.route('/status', methods=['GET'])
 def status():
     global experiments, experiment_results, current_experiment_index
@@ -118,6 +127,7 @@ def status():
             'results': experiment_results
         })
 
+
 def run_single_experiment(exp):
     N = exp['N']
     K = exp['K']
@@ -129,13 +139,23 @@ def run_single_experiment(exp):
 
     ground_truth = generate_ground_truth(N, K, use_power_law, alpha)
     ensemble = [mutate_partition(ground_truth, p) for _ in range(M)]
-    consensus_matrix = compute_consensus_matrix(ensemble)
 
+    # Convert ensemble to a MATLAB-compatible cell array
+    ensemble_matlab = matlab.double([part.tolist() for part in ensemble])
+
+    # Time the execution of the MATLAB function
+    start_time = time.time()
+    consensus_matrix = np.array(eng.matlab_clustering(ensemble_matlab))
+    matlab_execution_time = time.time() - start_time
+    print("MATLAB Execution Time:", matlab_execution_time)
+
+    # Apply shift to the consensus matrix based on the specified type
     if shift_type == 'modularity':
         consensus_matrix = modularity_shift(consensus_matrix)
     else:
         consensus_matrix = scale_shift(consensus_matrix)
 
+    # Apply clustering methods (rest of your original function)
     agglomerative_result = agglomerative_clustering(consensus_matrix, K)
     louvain_result = louvain_clustering(consensus_matrix, K)
     birch_result = birch_clustering(consensus_matrix, K)
@@ -183,6 +203,7 @@ def run_single_experiment(exp):
         }
     }
 
+
 def save_result_to_db(exp, result):
     experiment = Experiment(
         num_objects=exp['N'],
@@ -207,6 +228,7 @@ def save_result_to_db(exp, result):
     )
     db.session.add(experiment)
     db.session.commit()
+
 
 if __name__ == '__main__':
     db.create_all()
