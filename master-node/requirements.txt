@@ -1,0 +1,10 @@
+flask
+flask-restful
+gunicorn
+psycopg2-binary
+sqlalchemy
+sqlalchemy-json
+alembic
+redis
+pytest
+python-dotenv

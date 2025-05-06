@@ -1,0 +1,47 @@
+version: '3.8'
+
+services:
+  worker-1:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    network_mode: host
+    environment:
+      - MASTER_API_URL=${MASTER_API_URL:-http://localhost:5000/api}
+      - WORKER_ID=worker-1
+      - HEARTBEAT_INTERVAL=${HEARTBEAT_INTERVAL:-30}
+      - MAX_CONCURRENT_TASKS=${MAX_CONCURRENT_TASKS:-2}
+      - TASK_REQUEST_INTERVAL=${TASK_REQUEST_INTERVAL:-1.0}
+    restart: unless-stopped
+
+  worker-2:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    network_mode: host
+    environment:
+      - MASTER_API_URL=${MASTER_API_URL:-http://localhost:5000/api}
+      - WORKER_ID=worker-2
+      - HEARTBEAT_INTERVAL=${HEARTBEAT_INTERVAL:-30}
+      - MAX_CONCURRENT_TASKS=${MAX_CONCURRENT_TASKS:-2}
+      - TASK_REQUEST_INTERVAL=${TASK_REQUEST_INTERVAL:-1.0}
+    restart: unless-stopped
+
+  worker-3:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    network_mode: host
+    environment:
+      - MASTER_API_URL=${MASTER_API_URL:-http://localhost:5000/api}
+      - WORKER_ID=worker-3
+      - HEARTBEAT_INTERVAL=${HEARTBEAT_INTERVAL:-30}
+      - MAX_CONCURRENT_TASKS=${MAX_CONCURRENT_TASKS:-2}
+      - TASK_REQUEST_INTERVAL=${TASK_REQUEST_INTERVAL:-1.0}
+    restart: unless-stopped
