@@ -9,33 +9,27 @@ import requests
 from datetime import datetime
 from dotenv import load_dotenv
 
-# Load environment variables from .env file if present
 load_dotenv()
 
-# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
-# Configuration from environment variables
 MASTER_API_URL = os.environ.get('MASTER_API_URL', 'http://localhost:5000/api')
 HEARTBEAT_INTERVAL = int(os.environ.get('HEARTBEAT_INTERVAL', 30))
-TASK_REQUEST_INTERVAL = float(os.environ.get('TASK_REQUEST_INTERVAL', 1.0))  # seconds
+TASK_REQUEST_INTERVAL = float(os.environ.get('TASK_REQUEST_INTERVAL', 1.0))  
+MAX_CONCURRENT_TASKS = int(os.environ.get('MAX_CONCURRENT_TASKS', 2))
 
-# Worker concurrency settings
-MAX_CONCURRENT_TASKS = int(os.environ.get('MAX_CONCURRENT_TASKS', 2))  # Default to 2 concurrent tasks
-
-# Generate a unique worker ID
 WORKER_ID = os.environ.get('WORKER_ID', f"worker-{uuid.uuid4()}")
 HOSTNAME = socket.gethostname()
 try:
     IP_ADDRESS = socket.gethostbyname(HOSTNAME)
 except:
-    IP_ADDRESS = "127.0.0.1"  # Fallback to localhost if hostname resolution fails
+    IP_ADDRESS = "127.0.0.1" 
 
-# Worker metadata
+
 WORKER_METADATA = {
     'python_version': os.environ.get('PYTHON_VERSION', '3.x'),
     'startup_time': datetime.now().isoformat(),
@@ -152,11 +146,23 @@ def process_task(task):
         task_data = task['task_data']
         operation = task_data.get('operation', 'unknown')
         
-        # Simulate work with sleep
-        time.sleep(10)
-        
         if operation == 'sum':
             result = process_array_sum(task_data.get('array', []))
+        elif operation == 'kmeans':
+            from algorithms.kmeans_worker import run_kmeans_clustering
+            result = run_kmeans_clustering(task_data)
+        elif operation == 'louvain':
+            from algorithms.louvain_worker import run_louvain_clustering
+            result = run_louvain_clustering(task_data)
+        elif operation == 'gal_louvain':
+            from algorithms.gal_louvain_worker import run_gal_louvain
+            result = run_gal_louvain(task_data)
+        elif operation == 'agsu':
+            from algorithms.agsu_worker import run_agsu
+            result = run_agsu(task_data)
+        elif operation == 'agsa':
+            from algorithms.agsa_worker import run_agsa
+            result = run_agsa(task_data)
         else:
             result = {"error": f"Unknown operation: {operation}"}
         
