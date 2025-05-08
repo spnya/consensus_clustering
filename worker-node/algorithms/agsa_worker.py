@@ -7,6 +7,7 @@ from sklearn.metrics import (
     silhouette_score,
     calinski_harabasz_score
 )
+from .matrix_utils import scale_shift, modularity_shift
 
 def compute_semi_average_score(matrix, clusters):
     """Compute total semi-average similarity across all clusters"""
@@ -24,7 +25,16 @@ def compute_semi_average_score(matrix, clusters):
 def run_agsa(task_data):
     try:
         matrix = np.array(task_data['consensus_matrix'])
-        np.fill_diagonal(matrix, 0)  
+
+        shift_type = task_data.get('shift_type', 'none').lower()
+        if shift_type == 'scale':
+            matrix = scale_shift(matrix)
+        elif shift_type == 'modularity':
+            matrix = modularity_shift(matrix)
+        # else: no shift
+
+        np.fill_diagonal(matrix, 0)
+
         N = matrix.shape[0]
         clusters = [{i} for i in range(N)]
         start_time = time.time()
@@ -72,7 +82,6 @@ def run_agsa(task_data):
             'execution_time': exec_time
         }
 
-        # External metrics if ground truth provided
         if 'ground_truth' in task_data:
             gt = np.array(task_data['ground_truth'])
             result.update({
@@ -81,7 +90,6 @@ def run_agsa(task_data):
                 'fmi': fowlkes_mallows_score(gt, final_labels)
             })
 
-        # Internal metrics if original data is provided
         if len(set(final_labels)) > 1 and 'original_data' in task_data:
             data = np.array(task_data['original_data'])
             result.update({

@@ -8,11 +8,18 @@ from sklearn.metrics import (
     silhouette_score,
     calinski_harabasz_score
 )
+from .matrix_utils import scale_shift, modularity_shift
 
 def run_kmeans_clustering(task_data):
     try:
         data = np.array(task_data['data'])
         n_clusters = int(task_data['n_clusters'])
+
+        shift_type = task_data.get('shift_type', 'none').lower()
+        if shift_type == 'scale':
+            data = scale_shift(data)
+        elif shift_type == 'modularity':
+            data = modularity_shift(data)
 
         start_time = time.time()
         model = KMeans(n_clusters=n_clusters)

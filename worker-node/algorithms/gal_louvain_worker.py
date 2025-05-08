@@ -7,6 +7,7 @@ from sklearn.metrics import (
     silhouette_score,
     calinski_harabasz_score
 )
+from .matrix_utils import scale_shift, modularity_shift
 
 def compute_semi_average_similarity(matrix, labels):
     """Compute total semi-average within-cluster similarity"""
@@ -20,15 +21,20 @@ def compute_semi_average_similarity(matrix, labels):
         total += sim
     return total
 
-
 def run_gal_louvain(task_data):
     try:
         matrix = np.array(task_data['consensus_matrix'])
+
+        shift_type = task_data.get('shift_type', 'none').lower()
+        if shift_type == 'scale':
+            matrix = scale_shift(matrix)
+        elif shift_type == 'modularity':
+            matrix = modularity_shift(matrix)
+
         N = matrix.shape[0]
         labels = np.arange(N)
 
         start_time = time.time()
-
         improved = True
         while improved:
             improved = False

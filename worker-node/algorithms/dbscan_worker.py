@@ -1,7 +1,6 @@
 import numpy as np
 import time
-import networkx as nx
-import community as community_louvain
+from sklearn.cluster import DBSCAN
 from sklearn.metrics import (
     adjusted_rand_score,
     normalized_mutual_info_score,
@@ -11,36 +10,26 @@ from sklearn.metrics import (
 )
 from .matrix_utils import scale_shift, modularity_shift
 
-def run_louvain_clustering(task_data):
+def run_dbscan_clustering(task_data):
     try:
-        matrix = np.array(task_data['consensus_matrix'])
-        shift_type = task_data.get('shift_type', 'none').lower()
+        matrix = np.array(task_data['data'])
+        eps = float(task_data.get('eps', 0.5))
+        min_samples = int(task_data.get('min_samples', 5))
 
+        shift_type = task_data.get('shift_type', 'none').lower()
         if shift_type == 'scale':
             matrix = scale_shift(matrix)
         elif shift_type == 'modularity':
             matrix = modularity_shift(matrix)
 
-        N = matrix.shape[0]
-
-        G = nx.Graph()
-        for i in range(N):
-            for j in range(i + 1, N):
-                weight = matrix[i, j]
-                if weight > 0:
-                    G.add_edge(i, j, weight=weight)
-
         start_time = time.time()
-        partition = community_louvain.best_partition(G, weight='weight')
+        clustering = DBSCAN(eps=eps, min_samples=min_samples)
+        labels = clustering.fit_predict(matrix)
         exec_time = time.time() - start_time
-
-        labels = np.zeros(N, dtype=int)
-        for node, cluster in partition.items():
-            labels[node] = cluster
 
         result = {
             'labels': labels.tolist(),
-            'n_clusters': len(np.unique(labels)),
+            'n_clusters': len(set(labels)) - (1 if -1 in labels else 0),
             'execution_time': exec_time
         }
 
@@ -59,10 +48,7 @@ def run_louvain_clustering(task_data):
                 'calinski_harabasz': calinski_harabasz_score(data, labels)
             })
         else:
-            result.update({
-                'silhouette': None,
-                'calinski_harabasz': None
-            })
+            result.update({'silhouette': None, 'calinski_harabasz': None})
 
         return result
 

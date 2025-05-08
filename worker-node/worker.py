@@ -163,6 +163,21 @@ def process_task(task):
         elif operation == 'agsa':
             from algorithms.agsa_worker import run_agsa
             result = run_agsa(task_data)
+        elif operation == 'spectral':
+            from algorithms.spectral_worker import run_spectral_clustering
+            result = run_spectral_clustering(task_data)
+        elif operation == 'dbscan':
+            from algorithms.dbscan_worker import run_dbscan_clustering
+            result = run_dbscan_clustering(task_data)
+        elif operation == 'lwea':
+            from algorithms.lwea_worker import run_lwea
+            result = run_lwea(task_data) 
+        elif operation == 'lwgp':
+            from algorithms.lwgp_worker import run_lwgp
+            result = run_lwgp(task_data) 
+        #elif operation == 'acmk_km':
+        #    from algorithms.acmk_km_worker import run_acmk_km
+        #   result = run_acmk_km(task_data)
         else:
             result = {"error": f"Unknown operation: {operation}"}
         
@@ -170,7 +185,6 @@ def process_task(task):
         
         logger.info(f"Task {task_id} completed in {processing_time:.4f} seconds")
         
-        # Submit result to master node
         submit_result(task_id, result, processing_time)
     
     except Exception as e:

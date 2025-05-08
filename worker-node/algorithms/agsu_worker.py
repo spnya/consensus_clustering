@@ -7,6 +7,7 @@ from sklearn.metrics import (
     silhouette_score,
     calinski_harabasz_score
 )
+from .matrix_utils import scale_shift, modularity_shift
 
 def compute_summary_score(matrix, clusters):
     """Compute total summary score (sum of intra-cluster similarities)"""
@@ -21,24 +22,26 @@ def compute_summary_score(matrix, clusters):
 
 def run_agsu(task_data):
     try:
-        # 1) Load and shift the consensus matrix so its mean is 0
         matrix = np.array(task_data['consensus_matrix'])
-        matrix = matrix - np.mean(matrix)
+
+        shift_type = task_data.get('shift_type', 'none').lower()
+        if shift_type == 'scale':
+            matrix = scale_shift(matrix)
+        elif shift_type == 'modularity':
+            matrix = modularity_shift(matrix)
 
         N = matrix.shape[0]
-        clusters = [{i} for i in range(N)]  # start with singletons
+        clusters = [{i} for i in range(N)]
 
         start_time = time.time()
         improved = True
 
-        # 2) Greedy merge with early stopping
         while improved and len(clusters) > 1:
             improved = False
             current_score = compute_summary_score(matrix, clusters)
             best_score = current_score
             best_pair = None
 
-            # Try every pair to see if merging improves the summary score
             for i in range(len(clusters)):
                 for j in range(i + 1, len(clusters)):
                     merged = clusters[i] | clusters[j]
@@ -53,7 +56,6 @@ def run_agsu(task_data):
                         best_pair = (i, j)
                         improved = True
 
-            # If an improving merge was found, apply it
             if improved and best_pair:
                 i, j = best_pair
                 merged = clusters[i] | clusters[j]
@@ -63,7 +65,6 @@ def run_agsu(task_data):
                     if k not in (i, j)
                 ] + [merged]
 
-        # 3) Build final label array
         final_labels = np.zeros(N, dtype=int)
         for label, cluster in enumerate(clusters):
             for idx in cluster:
@@ -71,7 +72,6 @@ def run_agsu(task_data):
 
         exec_time = time.time() - start_time
 
-        # 4) Assemble result dict
         result = {
             'labels': final_labels.tolist(),
             'n_clusters': len(np.unique(final_labels)),
