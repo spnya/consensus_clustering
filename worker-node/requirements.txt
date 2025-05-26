@@ -2,3 +2,5 @@ requests
 python-dotenv
 scikit-learn
 scipy
+networkx
+python-louvain

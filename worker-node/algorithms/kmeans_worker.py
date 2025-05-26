@@ -13,8 +13,16 @@ from .matrix_utils import scale_shift, modularity_shift
 def run_kmeans_clustering(task_data):
     try:
         data = np.array(task_data['data'])
-        n_clusters = int(task_data['n_clusters'])
 
+        # pull n_clusters from top-level or from params
+        n_clusters = task_data.get('n_clusters')
+        if n_clusters is None:
+            n_clusters = task_data.get('params', {}).get('n_clusters')
+        if n_clusters is None:
+            return {'error': "Missing 'n_clusters' parameter for kmeans"}
+        n_clusters = int(n_clusters)
+
+        # optional shifts
         shift_type = task_data.get('shift_type', 'none').lower()
         if shift_type == 'scale':
             data = scale_shift(data)
@@ -26,30 +34,30 @@ def run_kmeans_clustering(task_data):
         labels = model.fit_predict(data)
         exec_time = time.time() - start_time
 
+        # build result
         result = {
             'labels': labels.tolist(),
             'n_clusters': len(np.unique(labels)),
             'execution_time': exec_time
         }
 
+        # supervised metrics
         if 'ground_truth' in task_data:
-            ground_truth = np.array(task_data['ground_truth'])
+            gt = np.array(task_data['ground_truth'])
             result.update({
-                'ari': adjusted_rand_score(ground_truth, labels),
-                'nmi': normalized_mutual_info_score(ground_truth, labels),
-                'fmi': fowlkes_mallows_score(ground_truth, labels)
+                'ari': adjusted_rand_score(gt, labels),
+                'nmi': normalized_mutual_info_score(gt, labels),
+                'fmi': fowlkes_mallows_score(gt, labels)
             })
 
+        # other internal metrics
         if len(set(labels)) > 1:
             result.update({
                 'silhouette': silhouette_score(data, labels),
                 'calinski_harabasz': calinski_harabasz_score(data, labels)
             })
         else:
-            result.update({
-                'silhouette': None,
-                'calinski_harabasz': None
-            })
+            result.update({'silhouette': None, 'calinski_harabasz': None})
 
         return result
 

@@ -1,8 +1,7 @@
 import uuid
 from datetime import datetime
 from sqlalchemy import Column, Integer, String, Float, ForeignKey, DateTime, Text, create_engine
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import relationship, sessionmaker
+from sqlalchemy.orm import relationship, sessionmaker, declarative_base
 from sqlalchemy.dialects.postgresql import JSONB
 from config import get_database_url
 

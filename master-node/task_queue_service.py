@@ -2,8 +2,9 @@ import json
 import redis
 import logging
 import time
+import numpy as np
 from datetime import datetime
-from models import Task, Worker, Experiment, get_db_session
+from models import Task, Result, Worker, Experiment, get_db_session
 from sqlalchemy.exc import SQLAlchemyError
 from contextlib import contextmanager
 
@@ -39,7 +40,6 @@ class TaskQueueService:
         
         # Store task data
         self.redis.hset('tasks:data', task_id, task_json)
-        
         # Add to queue
         self.redis.zadd(self.queue_key, {str(task_id): int(time.time())})
         
@@ -84,9 +84,7 @@ class TaskQueueService:
             # Factor in load percentage to avoid overloading nearly-full workers
             capacity_percentage = available / max_tasks if max_tasks > 0 else 0
             
-            # Use a scoring formula that considers both absolute capacity and percentage
-            # This helps balance between large workers with little free capacity
-            # and small workers with more free capacity
+            # Scoring: 70% absolute capacity, 30% percentage
             score = (available * 0.7) + (capacity_percentage * 0.3 * max_tasks)
             
             if score > max_available:
@@ -102,33 +100,27 @@ class TaskQueueService:
         
         # Store in Redis
         self.redis.hset(self.worker_stats_key, worker_id, json.dumps(stats))
-        
-        # Set expiration (worker considered dead after 60 seconds)
+        # Expire after 60s
         self.redis.expire(f"{self.worker_stats_key}:{worker_id}", 60)
     
     def assign_task(self, worker_id=None):
         """Assign a task to a worker, respecting capacity"""
-        # If no worker_id provided, find the best worker
         if not worker_id:
             worker_id = self._get_best_worker()
             if not worker_id:
                 logger.warning("No active workers available to process tasks")
                 return None
         
-        # Check worker capacity
         available, max_tasks = self._get_worker_capacity(worker_id)
         if available <= 0:
             logger.info(f"Worker {worker_id} is at capacity ({max_tasks}/{max_tasks})")
             return None
         
-        # Get the next task
-        task_id = self.redis.zpopmin(self.queue_key, 1)
-        if not task_id or len(task_id) == 0:
+        popped = self.redis.zpopmin(self.queue_key, 1)
+        if not popped:
             return None
         
-        task_id = task_id[0][0].decode('utf-8')
-        
-        # Get task data
+        task_id = popped[0][0].decode('utf-8')
         task_json = self.redis.hget('tasks:data', task_id)
         if not task_json:
             logger.error(f"Task {task_id} data not found")
@@ -136,17 +128,16 @@ class TaskQueueService:
         
         task = json.loads(task_json)
         
-        # Mark as processing by this worker
+        # Mark as processing
         self.redis.hset(self.processing_key, task_id, worker_id)
+        # Increment worker's active count
+        raw = self.redis.hget(self.worker_stats_key, worker_id)
+        if raw:
+            s = json.loads(raw)
+            s['active_tasks'] = s.get('active_tasks', 0) + 1
+            self.redis.hset(self.worker_stats_key, worker_id, json.dumps(s))
         
-        # Update worker stats
-        stats = self.redis.hget(self.worker_stats_key, worker_id)
-        if stats:
-            stats = json.loads(stats)
-            stats['active_tasks'] = stats.get('active_tasks', 0) + 1
-            self.redis.hset(self.worker_stats_key, worker_id, json.dumps(stats))
-        
-        # Update task status in database
+        # Update DB status
         try:
             with session_scope() as session:
                 db_task = session.query(Task).filter_by(id=int(task_id)).first()
@@ -160,133 +151,143 @@ class TaskQueueService:
         return task
     
     def complete_task(self, task_id, worker_id, result_data):
-        """Mark a task as completed"""
-        # Verify this worker owns the task
-        assigned_worker = self.redis.hget(self.processing_key, str(task_id))
-        if not assigned_worker or assigned_worker.decode('utf-8') != worker_id:
+        """Mark a task as completed, then trigger consensus if appropriate"""
+        assigned = self.redis.hget(self.processing_key, str(task_id))
+        if not assigned or assigned.decode('utf-8') != worker_id:
             logger.warning(f"Worker {worker_id} attempted to complete task {task_id} not assigned to it")
             return False
         
         # Remove from processing
         self.redis.hdel(self.processing_key, str(task_id))
+        # Update stats
+        raw = self.redis.hget(self.worker_stats_key, worker_id)
+        if raw:
+            s = json.loads(raw)
+            s['active_tasks'] = max(0, s.get('active_tasks', 0) - 1)
+            s['completed_tasks'] = s.get('completed_tasks', 0) + 1
+            self.redis.hset(self.worker_stats_key, worker_id, json.dumps(s))
         
-        # Update worker stats
-        stats = self.redis.hget(self.worker_stats_key, worker_id)
-        if stats:
-            stats = json.loads(stats)
-            stats['active_tasks'] = max(0, stats.get('active_tasks', 0) - 1)
-            stats['completed_tasks'] = stats.get('completed_tasks', 0) + 1
-            self.redis.hset(self.worker_stats_key, worker_id, json.dumps(stats))
-        
-        # Task data can be kept for history
         logger.info(f"Task {task_id} completed by worker {worker_id}")
+        
+        # --- NEW: if this was a base run, and all base runs for that dataset are done, build & enqueue consensus ---
+        try:
+            with session_scope() as session:
+                db_task = session.query(Task).filter_by(id=int(task_id)).first()
+                if db_task and db_task.task_data.get('run_type') == 'base':
+                    exp_id = db_task.experiment_id
+                    ds_idx = db_task.task_data['dataset_index']
+                    # fetch all base tasks for this exp + dataset
+                    all_tasks = session.query(Task).filter_by(experiment_id=exp_id).all()
+                    base = [
+                        t for t in all_tasks
+                        if t.task_data.get('run_type')=='base'
+                        and t.task_data.get('dataset_index')==ds_idx
+                    ]
+                    done = [t for t in base if t.status=='completed']
+                    if base and len(done)==len(base):
+                        # collect their labels
+                        labels_list = []
+                        for t in done:
+                            res = session.query(Result).filter_by(task_id=t.id).first()
+                            if res and 'labels' in res.result_data:
+                                labels_list.append(res.result_data['labels'])
+                        if labels_list:
+                            n = len(labels_list[0])
+                            M = np.zeros((n,n), float)
+                            for lbls in labels_list:
+                                arr = np.array(lbls)
+                                eq = (arr[:,None] == arr[None,:]).astype(float)
+                                M += eq
+                            M = (M / len(labels_list)).tolist()
+                            # enqueue consensus tasks
+                            expt = session.query(Experiment).get(exp_id)
+                            for algo in (expt.parameters or {}).get('consensus_algorithms', []):
+                                cd = {
+                                    'operation': algo,
+                                    'algorithm': algo,
+                                    'ensemble_size': expt.parameters.get('ensemble_size', 1),
+                                    'dataset_index': ds_idx,
+                                    'consensus_matrix': M,
+                                    'ground_truth': db_task.task_data.get('ground_truth'),
+                                    'run_type': 'consensus'
+                                }
+                                new_t = Task(
+                                    experiment_id=exp_id,
+                                    task_data=cd,
+                                    status='pending'
+                                )
+                                session.add(new_t)
+                                session.flush()
+                                self.enqueue_task(new_t.to_dict())
+        except Exception:
+            logger.exception("Error scheduling consensus tasks")
+        
         return True
     
     def requeue_lost_tasks(self):
         """Requeue tasks from workers that haven't sent heartbeats"""
-        processing_tasks = self.redis.hgetall(self.processing_key)
+        processing = self.redis.hgetall(self.processing_key)
         requeued = 0
-        
-        for task_id, worker_id in processing_tasks.items():
-            task_id = task_id.decode('utf-8')
-            worker_id = worker_id.decode('utf-8')
-            
-            # Check if worker is still active
-            stats = self.redis.hget(self.worker_stats_key, worker_id)
-            if not stats:
-                # Worker disappeared, requeue task
-                self._requeue_task(task_id)
+        for tidb, widb in processing.items():
+            tid, wid = tidb.decode('utf-8'), widb.decode('utf-8')
+            raw = self.redis.hget(self.worker_stats_key, wid)
+            if not raw or time.time() - json.loads(raw).get('last_heartbeat', 0) > 30:
+                self._requeue_task(tid)
                 requeued += 1
-            else:
-                stats = json.loads(stats)
-                last_heartbeat = stats.get('last_heartbeat', 0)
-                
-                # If no heartbeat in 30 seconds, requeue task
-                if time.time() - last_heartbeat > 30:
-                    self._requeue_task(task_id)
-                    requeued += 1
-        
         return requeued
     
     def _requeue_task(self, task_id):
         """Requeue a single task"""
-        # Remove from processing
         self.redis.hdel(self.processing_key, task_id)
-        
-        # Add back to queue with current timestamp
         self.redis.zadd(self.queue_key, {task_id: int(time.time())})
-        
-        # Update task status in database
         try:
             with session_scope() as session:
-                db_task = session.query(Task).filter_by(id=int(task_id)).first()
-                if db_task:
-                    db_task.status = 'pending'
-                    db_task.updated_at = datetime.utcnow()
+                db_t = session.query(Task).filter_by(id=int(task_id)).first()
+                if db_t:
+                    db_t.status = 'pending'
+                    db_t.updated_at = datetime.utcnow()
         except SQLAlchemyError as e:
-            logger.error(f"Database error updating task status: {e}")
-        
+            logger.error(f"Database error requeuing task: {e}")
         logger.info(f"Task {task_id} requeued")
     
     def steal_work(self, worker_id):
         """Steal work from overloaded workers"""
-        # Check if requester has capacity
-        available, max_tasks = self._get_worker_capacity(worker_id)
+        available, _ = self._get_worker_capacity(worker_id)
         if available <= 0:
             return None
         
-        # Find overloaded workers
-        overloaded_workers = []
-        workers = self.redis.hgetall(self.worker_stats_key)
-        
-        for w_id, stats in workers.items():
-            w_id = w_id.decode('utf-8')
-            if w_id == worker_id:
+        # find overloaded
+        overloaded = []
+        for widb, raw in self.redis.hgetall(self.worker_stats_key).items():
+            wid = widb.decode('utf-8')
+            if wid == worker_id:
                 continue
-                
-            stats = json.loads(stats)
-            max_w_tasks = stats.get('max_tasks', 1)
-            active_w_tasks = stats.get('active_tasks', 0)
-            
-            # Worker is considered overloaded if it has more than 75% capacity used
-            if active_w_tasks / max_w_tasks > 0.75:
-                overloaded_workers.append(w_id)
+            s = json.loads(raw)
+            mt, at = s.get('max_tasks',1), s.get('active_tasks',0)
+            if at/mt > 0.75:
+                overloaded.append(wid)
         
-        if not overloaded_workers:
-            return None
-        
-        # Try to steal a task from an overloaded worker
-        for w_id in overloaded_workers:
-            # Find a task assigned to this worker
-            for task_id, assigned_worker in self.redis.hscan_iter(self.processing_key):
-                task_id = task_id.decode('utf-8')
-                assigned_worker = assigned_worker.decode('utf-8')
-                
-                if assigned_worker == w_id:
-                    # Found a task to steal
-                    task_json = self.redis.hget('tasks:data', task_id)
-                    if task_json:
-                        task = json.loads(task_json)
-                        
-                        # Reassign to the stealing worker
-                        self.redis.hset(self.processing_key, task_id, worker_id)
-                        
-                        # Update worker stats for both workers
-                        self._update_worker_task_count(w_id, -1)
+        for victim in overloaded:
+            for tidb, widb in self.redis.hscan_iter(self.processing_key):
+                tid, owner = tidb.decode('utf-8'), widb.decode('utf-8')
+                if owner == victim:
+                    raw_t = self.redis.hget('tasks:data', tid)
+                    if raw_t:
+                        task = json.loads(raw_t)
+                        self.redis.hset(self.processing_key, tid, worker_id)
+                        self._update_worker_task_count(victim, -1)
                         self._update_worker_task_count(worker_id, 1)
-                        
-                        logger.info(f"Task {task_id} stolen from worker {w_id} by worker {worker_id}")
+                        logger.info(f"Task {tid} stolen from {victim} by {worker_id}")
                         return task
-        
         return None
     
     def _update_worker_task_count(self, worker_id, delta):
         """Update worker task count"""
-        stats = self.redis.hget(self.worker_stats_key, worker_id)
-        if stats:
-            stats = json.loads(stats)
-            stats['active_tasks'] = max(0, stats.get('active_tasks', 0) + delta)
-            self.redis.hset(self.worker_stats_key, worker_id, json.dumps(stats))
+        raw = self.redis.hget(self.worker_stats_key, worker_id)
+        if raw:
+            s = json.loads(raw)
+            s['active_tasks'] = max(0, s.get('active_tasks',0) + delta)
+            self.redis.hset(self.worker_stats_key, worker_id, json.dumps(s))
     
     def get_queue_stats(self):
         """Get statistics about the queue"""
@@ -298,40 +299,26 @@ class TaskQueueService:
             'used_capacity': 0,
             'worker_details': []
         }
-        
-        # Get worker stats
-        workers = self.redis.hgetall(self.worker_stats_key)
-        
-        for worker_id, worker_stats in workers.items():
-            worker_id = worker_id.decode('utf-8')
-            worker_stats = json.loads(worker_stats)
-            
-            # Check if worker is active (last heartbeat within 30 seconds)
-            last_heartbeat = worker_stats.get('last_heartbeat', 0)
-            is_active = time.time() - last_heartbeat <= 30
-            
-            if is_active:
+        for widb, raw in self.redis.hgetall(self.worker_stats_key).items():
+            wid = widb.decode('utf-8')
+            s = json.loads(raw)
+            hb = s.get('last_heartbeat', 0)
+            if time.time() - hb <= 30:
                 stats['active_workers'] += 1
-                
-                max_tasks = worker_stats.get('max_tasks', 1)
-                active_tasks = worker_stats.get('active_tasks', 0)
-                
-                stats['total_capacity'] += max_tasks
-                stats['used_capacity'] += active_tasks
-                
+                mt, at = s.get('max_tasks',1), s.get('active_tasks',0)
+                stats['total_capacity'] += mt
+                stats['used_capacity'] += at
                 stats['worker_details'].append({
-                    'worker_id': worker_id,
-                    'max_tasks': max_tasks,
-                    'active_tasks': active_tasks,
-                    'available_capacity': max_tasks - active_tasks,
-                    'last_heartbeat': last_heartbeat,
-                    'completed_tasks': worker_stats.get('completed_tasks', 0)
+                    'worker_id': wid,
+                    'max_tasks': mt,
+                    'active_tasks': at,
+                    'available_capacity': mt - at,
+                    'last_heartbeat': hb,
+                    'completed_tasks': s.get('completed_tasks',0)
                 })
-        
         stats['available_capacity'] = stats['total_capacity'] - stats['used_capacity']
-        if stats['total_capacity'] > 0:
-            stats['capacity_percent'] = (stats['used_capacity'] / stats['total_capacity']) * 100
-        else:
-            stats['capacity_percent'] = 0
-            
+        stats['capacity_percent'] = (
+            (stats['used_capacity']/stats['total_capacity'])*100
+            if stats['total_capacity'] else 0
+        )
         return stats

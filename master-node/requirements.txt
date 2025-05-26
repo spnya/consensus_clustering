@@ -8,3 +8,4 @@ alembic
 redis
 pytest
 python-dotenv
+scikit-learn

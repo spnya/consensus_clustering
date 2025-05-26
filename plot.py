@@ -1,56 +1,67 @@
+import json
+import pandas as pd
 import matplotlib.pyplot as plt
-import numpy as np
 
-# Data
+# Load the results JSON
+with open('res', 'r') as f:
+    data = json.load(f)
 
-algorithms = {
-    "Agglomerative": [
-        [0.91, 0.07],
-        [0.62, 0.34],
-        [0.57, 0.29],
-        [0.37, 0.28],
-        [0.08, 0.10],
-        [0.33, 0.24],
-        [0.10, 0.13],
-        [0.02, 0.06],
-        [0.01, 0.01]
-    ],
-    "Louvain": [
-        [0.58, 0.37],
-        [0.29, 0.31],
-        [0.65, 0.37],
-        [0.46, 0.41],
-        [0.25, 0.31],
-        [0.54, 0.39],
-        [0.31, 0.29],
-        [0.26, 0.10],
-        [0.01, 0.01]
-    ],
-    "MeanShift": [
-        [0.77, 0.15],
-        [0.52, 0.43],
-        [0.47, 0.28],
-        [0.17, 0.34],
-        [0.00, 0.00],
-        [0.00, 0.00],
-        [0.00, 0.00],
-        [0.00, 0.00],
-        [0.00, 0.00]
-    ],
-}
+# Build DataFrame, include consensus with mutation_prob=0
+records = []
+for entry in data:
+    rd = entry.get('result_data', {})
+    td = entry.get('task_data', {})
+    if 'ari' in rd:
+        algo = td.get('algorithm')
+        run_type = td.get('run_type', 'base')
+        # consensus tasks don't have mutation_prob, set to 0
+        mp = td.get('mutation_prob', 0.0)  
+        records.append({
+            'algorithm': algo,
+            'run_type': run_type,
+            'mutation_prob': mp,
+            'ari': rd['ari']
+        })
 
-fig, ax = plt.subplots(figsize=(10, 6))
+df = pd.DataFrame(records)
 
-for alg, data in algorithms.items():
-    data = np.array(data)
-    x = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
-    y_mean = data[:, 0]
-    y_std = data[:, 1]
-    ax.errorbar(x, y_mean, yerr=y_std, label=alg, marker='o', capsize=5)
+# Separate base and consensus
+base_df = df[df['run_type'] == 'base']
+cons_df = df[df['run_type'] == 'consensus']
 
-ax.set_xlabel('Mutation probability')
-ax.set_ylabel('Average ARI')
-ax.set_title("Average ARI with power law cluster sizes, modularity shift, N=100, n=500, k=20, M=20")
+# Aggregate base: mean+std
+base_agg = base_df.groupby(['mutation_prob', 'algorithm'])['ari'].agg(['mean', 'std']).reset_index()
+
+# Aggregate consensus: mean only (flat line)
+cons_agg = cons_df.groupby('algorithm')['ari'].mean().reset_index()
+
+# Plot
+fig, ax = plt.subplots()
+
+# Base algorithms lines with error bars
+for algo, grp in base_agg.groupby('algorithm'):
+    ax.errorbar(
+        grp['mutation_prob'],
+        grp['mean'],
+        yerr=grp['std'],
+        marker='o',
+        label=f"{algo} (base)"
+    )
+
+# Consensus algorithms as horizontal lines
+for _, row in cons_agg.iterrows():
+    ax.hlines(
+        row['ari'],
+        xmin=base_agg['mutation_prob'].min(),
+        xmax=base_agg['mutation_prob'].max(),
+        linestyles='--',
+        label=f"{row['algorithm']} (consensus)"
+    )
+
+ax.set_xlabel('Mutation Probability')
+ax.set_ylabel('Mean ARI')
+ax.set_title('ARI vs Mutation Probability: Base vs Consensus')
 ax.legend()
-plt.grid(True)
+ax.grid(True)
+plt.tight_layout()
 plt.show()
