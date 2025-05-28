@@ -1,10 +1,29 @@
+# Consensus Clustering 2025 HSE Parinov-Ukhanov
+
+
+Course work 2025
+## Submitted by
+**Student**: Ukhanov Aleksandr Iurevich #БПАД221, 3rd year of study
+
+**University**: HSE University
+
+# Results 
+### Clustmutation comparison comprehensive
+![image info](./images/mutation_comparison_comprehensive.png)
+### Heatmaps
+![image info](./images/mutation_heatmap_ari_heatmap.png)
+![image info](./images/mutation_heatmap_nmi_heatmap.png)
+![image info](./images/mutation_heatmap_fmi_heatmap.png)
+### Scalability analysis
+![image info](./images/execution_time_boxplot.png)
+![image info](./images/scalability_analysis.png)
+
+
 # Consensus Clustering 2024 HSE Mirkin-Ukhanov
 
 Course work 2024
 ## Submitted by
 **Student**: Ukhanov Aleksandr Iurevich #БПАД221, 2rd year of study
-
-**Project Supervisor**: Mirkin Boris Grigorievich. Tenured Professor
 
 **University**: HSE University
 
